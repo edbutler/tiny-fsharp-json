@@ -5,7 +5,7 @@ open Xunit.Extensions
 open FsUnit.Xunit
 open Microsoft.FSharp.Reflection
 
-module J = Agakme.IO.Json
+module J = TinyJson.Json
 
 // basic parsing tests
 
