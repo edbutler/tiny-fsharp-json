@@ -414,7 +414,7 @@ type private Parser (program, filename, doParseMeta) =
                     if not (cs.Peek = ']') then matchCharacter ','
                 cs.Next () |> ignore // skip final ]
                 Array (ArrayValue (values.ToArray ())), upcast values
-            | c when System.Char.IsDigit c ->
+            | c = '-' || c when System.Char.IsDigit c ->
                 Int (System.Int32.Parse (takeWhile c System.Char.IsDigit)), Seq.empty
             | c when System.Char.IsLetter c ->
                 let value =
