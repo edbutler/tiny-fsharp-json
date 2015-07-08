@@ -4,7 +4,7 @@
 /// A lightweight JSON parser/formatter and related tools for processing JSON data.
 /// </summary>
 /// <remarks>
-/// This module's goal is a lightweight JSON lib with a F# discriminated untion AST representation that doesn't have external dependencies (other than F# 2.0).
+/// This module's goal is a lightweight JSON lib with a F# discriminated union AST representation that doesn't have external dependencies (other than F# 2.0).
 /// This is only a partial implementation of the JSON spec: e.g., it supports integers rather than numbers, some escape codes may be unsupported.
 /// It also aims to allow for simple parsing of data structures from JSON ast (for use with storing data files) without using schemas.
 /// The json processing functions that come with the AST throw exceptions which can be paired with meta data to allow tools to pinpoint problematic data, without a significant burden on the external code that processes JSON.
@@ -20,17 +20,19 @@ open System.Text
 
 /// the Json AST.
 type JsonValue =
-| Null
+// null needs to be a class instead of an object for the meta mapping to work
+| Null of unit
 | Int of int
 | String of string
 | Bool of bool
 | Array of JsonArray
 | Object of JsonObject
 with
+    static member MakeNull () = Null ()
     /// Format json with little wasted space to a TextWriter.
     member t.SerializeTo (writer:System.IO.TextWriter) =
         match t with
-        | Null -> writer.Write "null"
+        | Null () -> writer.Write "null"
         | Int i -> writer.Write i
         | String s ->
             let s = s.Replace("\\", "\\\\").Replace("\n", "\\n").Replace("\t", "\\t").Replace("\r", "\\r").Replace("\"", "\\\"")
@@ -188,17 +190,20 @@ let tryGetField j f =
 /// <exception cref="KeyNotFoundException">If this object does not have the given field.</exception>
 let getField j f = match tryGetField j f with Some v -> v | None -> raise (KeyNotFoundException (j, f, "", null))
 
+/// <summary>Set a field on an object to the given value. Will overwrite if key already exists.</summary>
+/// <exception cref="TypeMismatchException">If this value is not an json object.</exception>
 let setField j (key, value) =
     match asObject j with
         ObjectValue o ->
-            let newO =
-                match Array.tryFindIndex (fun (k,_) -> k = key) o with
-                | None -> Array.append o [| key, value |]
-                | Some i ->
-                    let a = Array.copy o
-                    a.[i] <- (key, value)
-                    a
-            Object (ObjectValue newO)
+            match Array.tryFindIndex (fun (k,_) -> k = key) o with
+            | None ->
+                // need to re-sort with new key, so send through public ctor
+                Array.append o [| key, value |] |> objectOfArray
+            | Some i ->
+                let a = Array.copy o
+                a.[i] <- (key, value)
+                // no need to re-sort if just changing an existing key
+                Object (ObjectValue a)
 
 /// <summary>Cast this value to an json object and convert to a <c>Map</c>.</summary>
 /// <exception cref="TypeMismatchException">If this value is not an json object.</exception>
@@ -280,7 +285,7 @@ let private (|DictType|_|) (obj:obj) : seq<obj * obj> option =
 /// If performance is important, prefer the direct construction functions.</remarks>
 let rec fromObject (obj:obj) =
     match obj with
-    | null -> Null
+    | null -> Null ()
     | :? string as x -> String x
     | :? int as x -> Int x
     | :? bool as x -> Bool x
@@ -350,7 +355,7 @@ type private Parser (program, filename, doParseMeta) =
         skipWhitespace ()
 
     let parseString doReadOpeningQuote =
-        if doReadOpeningQuote then matchCharacter '"' 
+        if doReadOpeningQuote then matchCharacter '"'
         let start = cs.Position // not quite correct pos, but MEH
         let b = StringBuilder ()
         while not (cs.Peek = '"' || isNewline cs.Peek) do
@@ -402,20 +407,21 @@ type private Parser (program, filename, doParseMeta) =
             | '[' ->
                 let values = List()
                 let mutable counter = 0
+                skipWhitespace ()
                 while not (cs.Peek = ']') do
                     values.Add (parse (ChildType.Index counter)) |> ignore
                     counter <- counter + 1
                     if not (cs.Peek = ']') then matchCharacter ','
                 cs.Next () |> ignore // skip final ]
                 Array (ArrayValue (values.ToArray ())), upcast values
-            | c when c = '-' || System.Char.IsDigit c ->
+            | c when System.Char.IsDigit c ->
                 Int (System.Int32.Parse (takeWhile c System.Char.IsDigit)), Seq.empty
             | c when System.Char.IsLetter c ->
                 let value =
                     match takeWhile c System.Char.IsLetter with
                     | "true" -> Bool true
                     | "false" -> Bool false
-                    | "null" -> Null
+                    | "null" -> Null ()
                     | _ -> syntaxError SyntaxErrorCode.InvalidKeyword (start,cs.Position) "invalid keyword"
                 value, Seq.empty
             | '"' -> String (parseString false), Seq.empty
